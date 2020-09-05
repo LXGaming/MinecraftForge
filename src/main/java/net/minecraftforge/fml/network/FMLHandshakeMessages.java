@@ -209,6 +209,16 @@ public class FMLHandshakeMessages
         }
     }
 
+    public static class S2CReset extends LoginIndexedMessage {
+        void encode(final PacketBuffer buffer) {
+
+        }
+        
+        public static S2CReset decode(final PacketBuffer buffer) {
+            return new S2CReset();
+        }
+    }
+
     public static class S2CRegistry extends LoginIndexedMessage {
         private ResourceLocation registryName;
         @Nullable

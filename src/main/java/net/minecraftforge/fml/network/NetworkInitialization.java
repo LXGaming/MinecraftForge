@@ -44,6 +44,13 @@ class NetworkInitialization {
                 consumer(FMLHandshakeHandler.indexFirst(FMLHandshakeHandler::handleClientAck)).
                 add();
 
+        handshakeChannel.messageBuilder(FMLHandshakeMessages.S2CReset.class, 69).
+                loginIndex(FMLHandshakeMessages.LoginIndexedMessage::getLoginIndex, FMLHandshakeMessages.LoginIndexedMessage::setLoginIndex).
+                decoder(FMLHandshakeMessages.S2CReset::decode).
+                encoder(FMLHandshakeMessages.S2CReset::encode).
+                consumer(FMLHandshakeHandler.biConsumerFor(FMLHandshakeHandler::handleReset)).
+                add();
+
         handshakeChannel.messageBuilder(FMLHandshakeMessages.S2CModList.class, 1, NetworkDirection.LOGIN_TO_CLIENT).
                 loginIndex(FMLHandshakeMessages.LoginIndexedMessage::getLoginIndex, FMLHandshakeMessages.LoginIndexedMessage::setLoginIndex).
                 decoder(FMLHandshakeMessages.S2CModList::decode).

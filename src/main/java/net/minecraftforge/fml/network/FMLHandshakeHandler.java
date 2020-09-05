@@ -19,12 +19,23 @@
 
 package net.minecraftforge.fml.network;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screen.DirtMessageScreen;
+import net.minecraft.client.network.login.ClientLoginNetHandler;
+import net.minecraft.client.network.play.ClientPlayNetHandler;
+import net.minecraft.client.renderer.tileentity.TileEntityRendererDispatcher;
+import net.minecraft.network.ProtocolType;
 import net.minecraft.network.login.ServerLoginNetHandler;
 import com.google.common.collect.Multimap;
 import net.minecraft.network.NetworkManager;
 import net.minecraft.network.PacketBuffer;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.text.StringTextComponent;
+import net.minecraft.util.text.TranslationTextComponent;
+import net.minecraftforge.client.MinecraftForgeClient;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.world.WorldEvent;
+import net.minecraftforge.fml.client.ClientHooks;
 import net.minecraftforge.fml.config.ConfigTracker;
 import net.minecraftforge.fml.loading.AdvancedLogMessageAdapter;
 import net.minecraftforge.fml.network.simple.SimpleChannel;
@@ -39,6 +50,7 @@ import org.apache.logging.log4j.MarkerManager;
 import com.google.common.collect.Maps;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
@@ -263,6 +275,67 @@ public class FMLHandshakeHandler {
     void handleClientAck(final FMLHandshakeMessages.C2SAcknowledge msg, final Supplier<NetworkEvent.Context> contextSupplier) {
         LOGGER.debug(FMLHSMARKER, "Received acknowledgement from client");
         contextSupplier.get().setPacketHandled(true);
+    }
+
+    void handleReset(final FMLHandshakeMessages.S2CReset msg, final Supplier<NetworkEvent.Context> contextSupplier) {
+        NetworkEvent.Context context = contextSupplier.get();
+        NetworkManager networkManager = context.getNetworkManager();
+        
+        if (context.getDirection() != NetworkDirection.LOGIN_TO_CLIENT && context.getDirection() != NetworkDirection.PLAY_TO_CLIENT) {
+            networkManager.closeChannel(new StringTextComponent("Illegal packet received, terminating connection"));
+            throw new IllegalStateException("Invalid packet received, aborting connection");
+        }
+        
+        LOGGER.debug(FMLHSMARKER, "Received reset from server");
+        CompletableFuture<Void> future = context.enqueueWork(() -> {
+            LOGGER.debug(FMLHSMARKER, "Cleaning up.");
+            
+            Minecraft.getInstance().displayGuiScreen(new DirtMessageScreen(new TranslationTextComponent("connect.negotiating")));
+            
+            ClientPlayNetHandler clientPlayNetHandler = Minecraft.getInstance().getConnection();
+            if (clientPlayNetHandler != null) {
+                clientPlayNetHandler.cleanup();
+            }
+            
+            Minecraft.getInstance().gameRenderer.resetData();
+            if (Minecraft.getInstance().world != null) {
+                MinecraftForge.EVENT_BUS.post(new WorldEvent.Unload(Minecraft.getInstance().world));
+            }
+            
+            ClientHooks.handleClientWorldClosing(Minecraft.getInstance().world);
+            Minecraft.getInstance().world = null;
+            
+            Minecraft.getInstance().worldRenderer.setWorldAndLoadRenderers(null);
+            Minecraft.getInstance().particles.clearEffects(null);
+            TileEntityRendererDispatcher.instance.setWorld(null);
+            MinecraftForgeClient.clearRenderCache();
+            Minecraft.getInstance().player = null;
+        });
+        
+        LOGGER.debug(FMLHSMARKER, "Waiting for clean up to complete.");
+        try {
+            future.get();
+        } catch (Exception ex) {
+            LOGGER.error(FMLHSMARKER, "Failed to reset registry, closing connection.");
+            this.manager.closeChannel(new StringTextComponent("Failed to reset registry, closing connection"));
+            return;
+        }
+        
+        LOGGER.debug("Clean up complete, continuing reset.");
+        NetworkHooks.registerClientLoginChannel(networkManager);
+        networkManager.setConnectionState(ProtocolType.LOGIN);
+        networkManager.setNetHandler(new ClientLoginNetHandler(
+                networkManager,
+                Minecraft.getInstance(),
+                null,
+                (statusMessage) -> {}
+        ));
+        
+        context.setPacketHandled(true);
+        FMLNetworkConstants.handshakeChannel.reply(
+                new FMLHandshakeMessages.C2SAcknowledge(),
+                new NetworkEvent.Context(networkManager, NetworkDirection.LOGIN_TO_CLIENT, 69)
+        );
     }
 
     void handleConfigSync(final FMLHandshakeMessages.S2CConfigData msg, final Supplier<NetworkEvent.Context> contextSupplier) {
